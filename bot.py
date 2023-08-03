@@ -48,7 +48,7 @@ async def message_handler(message: types.Message) -> None:
             user_id = message.chat.id
             student = STUDENTS.get(user_id)
             if student is None:
-                student = StudentMemory(user_id, message.from_user.full_name)
+                student = StudentMemory(OPENAI_API_KEY, user_id, message.from_user.full_name)
                 STUDENTS.put(user_id, student)
 
             print(f'message from {student.user_id, student.name}: {message.text}')
