@@ -4,8 +4,9 @@ import datetime
 from dotenv import load_dotenv
 import os
 
-from aiogram import Bot, Dispatcher, Router, types
-from aiogram.filters import Command
+from aiogram import Bot, Dispatcher, types
+from aiogram.dispatcher.filters import Command
+
 from aiogram.types import Message
 
 from chains import OwlChat, StudentMemory
@@ -15,29 +16,29 @@ from chache import LRUCache
 load_dotenv()
 BOT_TOKEN = os.environ['BOT_TOKEN']
 OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
-
 # -----------------------------------
-router = Router()
-dp = Dispatcher()
-dp.include_router(router)
 bot = Bot(BOT_TOKEN, parse_mode="HTML")
+dp = Dispatcher(bot)
 # -----------------------------------
+
 
 
 STUDENTS = LRUCache(50)
 
 owlchat = OwlChat(OPENAI_API_KEY)
 
+welcome_message='''Вітаю тебе у чаті з найкращім віртуальним тьютором - Кібер Совою!'''
 
-@router.message(Command(commands=["start"]))
+
+@dp.message_handler(Command(commands=["start"]))
 async def command_start_handler(message: Message) -> None:
     """
     This handler receive messages with `/start` command
     """
-    await message.answer(f"Hello, <b>{message.from_user.full_name}!</b>")
+    await message.answer(f"Hello, <b>{message.from_user.full_name}!</b><br>{welcome_message}")
 
 
-@router.message()
+@dp.message_handler(content_types=types.ContentType.TEXT)
 async def message_handler(message: types.Message) -> None:
     """
     Handler for message
@@ -55,7 +56,7 @@ async def message_handler(message: types.Message) -> None:
             if len(student.input) > 0:
                 response = await owlchat.chat(student)
                 if len(response)>0:
-                    await message.answer(chat_id=message.chat.id, text=response)
+                    await message.answer(text=response)
             # user_last_activity[message.from_user.id] = {}
             # user_last_activity[message.from_user.id]['idle_time'] = 60
             # user_last_activity[message.from_user.id]['time'] = datetime.datetime.now()
@@ -82,6 +83,7 @@ async def check_user_inactivity():
 async def handle_user_inactivity(user_id: int, current_time, time_difference):
     print(f'Inactivity for user id={user_id}, time_diff={time_difference}')
     await bot.send_message(user_id, text="Спим?")
+
 
 
 async def main() -> None:
