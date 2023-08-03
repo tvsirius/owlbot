@@ -1,14 +1,18 @@
 import os
 import asyncio
+import logging
 from dotenv import load_dotenv
 import bot
 
 load_dotenv()
-BOT_TOKEN = os.environ['BOT_TOKEN']
+
 
 
 async def run_bot():
-    await bot.main(BOT_TOKEN)
+
+    await bot.main()
+
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     asyncio.run(run_bot())

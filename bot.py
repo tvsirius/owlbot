@@ -1,19 +1,27 @@
 import asyncio
 import logging
+import datetime
 from dotenv import load_dotenv
 import os
+
+load_dotenv()
+BOT_TOKEN = os.environ['BOT_TOKEN']
 
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.filters import Command
 from aiogram.types import Message
 
-load_dotenv()
-# BOT_TOKEN = os.environ['BOT_TOKEN']
-
-# Bot token can be obtained via https://t.me/BotFather
-
-# All handlers should be attached to the Router (or Dispatcher)
+#-----------------------------------
 router = Router()
+dp = Dispatcher()
+dp.include_router(router)
+bot = Bot(BOT_TOKEN, parse_mode="HTML")
+#-----------------------------------
+
+
+
+user_last_activity={}
+
 
 
 @router.message(Command(commands=["start"]))
@@ -21,42 +29,45 @@ async def command_start_handler(message: Message) -> None:
     """
     This handler receive messages with `/start` command
     """
-    # Most event objects have aliases for API methods that can be called in events' context
-    # For example if you want to answer to incoming message you can use `message.answer(...)` alias
-    # and the target chat will be passed to :ref:`aiogram.methods.send_message.SendMessage`
-    # method automatically or call API method directly via
-    # Bot instance: `bot.send_message(chat_id=message.chat.id, ...)`
     await message.answer(f"Hello, <b>{message.from_user.full_name}!</b>")
 
 
 @router.message()
-async def echo_handler(message: types.Message) -> None:
+async def message_handler(message: types.Message) -> None:
     """
-    Handler will forward received message back to the sender
-
-    By default, message handler will handle all message types (like text, photo, sticker and etc.)
+    Handler for message
     """
     try:
         # Send copy of the received message
         print(message.text)
         await message.send_copy(chat_id=message.chat.id)
+        user_last_activity[message.from_user.id] = {}
+        user_last_activity[message.from_user.id]['idle_time'] = 60
+        user_last_activity[message.from_user.id]['time'] = datetime.datetime.now()
     except TypeError:
         # But not all the types is supported to be copied so need to handle it
         await message.answer("Nice try!")
 
 
-async def main(BOT_TOKEN) -> None:
-    # Dispatcher is a root router
-    dp = Dispatcher()
-    # ... and all other routers should be attached to Dispatcher
-    dp.include_router(router)
+async def check_user_inactivity():
+    while True:
+        await asyncio.sleep(30)  # Check user inactivity every 10 seconds
+        current_time = datetime.datetime.now()
+        for user_id in user_last_activity:
+            if user_last_activity[user_id]['idle_time'] > 0:
+                time_difference = current_time - user_last_activity[user_id]['time']
+                if time_difference >= datetime.timedelta(seconds=user_last_activity[user_id]['idle_time']):
+                    user_last_activity[user_id]['time']=current_time
+                    await handle_user_inactivity(user_id, current_time, time_difference)
 
-    # Initialize Bot instance with a default parse mode which will be passed to all API calls
-    bot = Bot(BOT_TOKEN, parse_mode="HTML")
-    # And the run events dispatching
+
+async def handle_user_inactivity(user_id: int, current_time, time_difference):
+    print(f'Inactivity for user id={user_id}, time_diff={time_difference}')
+    await bot.send_message(user_id, text="Спим?")
+
+
+async def main() -> None:
+    asyncio.create_task(check_user_inactivity())
     await dp.start_polling(bot)
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
