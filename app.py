@@ -1,11 +1,7 @@
 import os
 import asyncio
 import logging
-from dotenv import load_dotenv
 import bot
-
-load_dotenv()
-
 
 
 async def run_bot():
