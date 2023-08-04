@@ -17,7 +17,7 @@ load_dotenv()
 BOT_TOKEN = os.environ['BOT_TOKEN']
 OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
 # -----------------------------------
-bot = Bot(BOT_TOKEN, parse_mode="HTML")
+bot = Bot(BOT_TOKEN)
 dp = Dispatcher(bot)
 # -----------------------------------
 
