@@ -43,12 +43,14 @@ async def message_handler(message: types.Message) -> None:
     """
     Handler for message
     """
+
     try:
         if message.chat.type == "private":
+            print(f'message {message.chat.type}')
             user_id = message.chat.id
             student = STUDENTS.get(user_id)
             if student is None:
-                student = StudentMemory(OPENAI_API_KEY, user_id, message.from_user.full_name)
+                student = StudentMemory(OPENAI_API_KEY, user_id, username=message.from_user.full_name)
                 STUDENTS.put(user_id, student)
 
             print(f'message from {student.user_id, student.name}: {message.text}')
@@ -64,6 +66,7 @@ async def message_handler(message: types.Message) -> None:
             pass
     except TypeError:
         # But not all the types is supported to be copied so need to handle it
+        print('typeerror')
         await message.answer("Вибачь, сталась помилка!")
 
 

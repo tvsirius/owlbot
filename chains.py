@@ -31,35 +31,37 @@ RELAX_TEMPERATURE = 0.8
 
 
 control_thought_schema = ResponseSchema(name="thought",
-                                        description="Твоя думка яка передбачає потреби учня з урахуванням поточного діалогу та його досягнень. ")
+                                        description="Yor Thought that makes a prediction about the scholar's needs given current dialogue")
 control_plan_next_step_schema = ResponseSchema(name="next_step",
-                                               description='Твій вибір prompt мовної моделі. Повинен бути із цього списку: ["PLAN", "RELAX"].')
+                                               description='Your chose of best prompt. Must be one of: ["PLAN", "RELAX"].')
 control_tutor_next_step_schema = ResponseSchema(name="next_step",
-                                                description='Твій вибір prompt мовної моделі. Повинен бути із цього списку: ["TUTOR", "RELAX"].')
+                                                description='Your chose of best prompt. Must be one of: ["TUTOR", "RELAX"].')
 
 plan_response_schema = ResponseSchema(name="response",
-                                      description="Відповідь учную, враховуючи твою думку, та те, чи було затверджно з учнем наступний урок. Ти спілкуєшся з учнем українською мовою.")
-
+                                      description="Response in Ukrainian language.")
 plan_student_current_lesson_schema = ResponseSchema(name="student_current_lesson",
-                                                    description='Якщо тему наступного урока було затверджено, то у цю змінну заносится номер та зміст урока. Якщо тема не затверджена, або ти не знаешь чи затверджена чи ні, то ця змінна дорівнює пустий строки = "".')
+                                                    description='Must be left blank (equals "") if the next lesson topic is not confirmed, or you are not sure. If the topic is confirmed, must be set to lesson number and title and content - listing of topics of the lesson ')
 
 tutor_response_schema = ResponseSchema(name="response",
-                                       description="Твоя відповідь, або подача матеріалу учню, враховуючи твою думку, на українській мові.")
+                                       description="Response to the scholar input in Ukrainian language.")
 tutor_student_advance_schema = ResponseSchema(name="student_advance",
-                                              description='Якщо є висновок, що даний урок пройдено, то student_advance повинно дорівнювати "True", якщо ні, або ти не знаєш - то "False"')
+                                              description='If lesson is completed must be set to "True", if not, or you are not sure must be set "False"')
 tutor_student_summary_update_schema = ResponseSchema(name="student_summary_update",
-                                                     description="Якщо є висновок, що даний урок пройдено, то в цю змінну ти заносиш коментар, щодо успіху учня по цьому уроку, для майбутнього розуміння його прогресу.")
+                                                     description="Only if there is a conclusion, that scholar have successfully completed this lesson, must contain your comment on scholar achievement on this lesson")
 
 relax_response_schema = ResponseSchema(name="response",
-                                       description=" Весела відповідь від Кібер-Сови, на українській мові. ")
+                                       description="Funny response to the scholar input in Ukrainian language.")
 
 memory_defaults = {
     "memory_key": "history",
     "input_key": "input",
-    "ai_prefix": "Кібер-Сова",
-    "human_prefix": "Учень:",
+    "ai_prefix": "Cyber-Owl",
+     # "human_prefix": "Scholar",
 }
 
+
+def manual_parse(s:str):
+    return loads("{"+s.split("{")[1].split("}")[0].strip()+"}")
 
 class StudentMemory:
     # memories
@@ -76,8 +78,7 @@ class StudentMemory:
         self.name = username
         self.user_id = user_id
         self.llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.4, openai_api_key=openai_api_key)
-        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, human_prefix=self.name,
-                                                       max_token_limit=500)
+        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=700, human_prefix=self.name)
         # self.though_history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=500)
         self.student_progress = ConversationSummaryMemory(llm=self.llm)
         self.student_current_lesson = ""
@@ -141,15 +142,18 @@ class OwlChat:
                 thought=thought,
                 history=student.history.load_memory_variables({})['history'],
                 input=student.input,
-                # name=student.name,
+                name=student.name,
                 learning_program=student.learning_program,
                 format_instructions=self.plan_parser.get_format_instructions()
             )
             try:
                 response_dict = self.plan_parser.parse(response)
             except:
-                print(f'ERROR parsing output: {response}')
-                return
+                try:
+                    response_dict=manual_parse(response)
+                except:
+                    print(f'ERROR parsing output: {response}')
+                    return
             print(response_dict)
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
             student.student_current_lesson = response_dict["student_current_lesson"]
@@ -157,19 +161,22 @@ class OwlChat:
 
         async def do_tutor(thought):
             response = await self.tutor_chain.apredict(
-                student_progress=student.student_progress.load_memory_variables({})['history'],
+                # student_progress=student.student_progress.load_memory_variables({})['history'],
                 thought=thought,
                 history=student.history.load_memory_variables({})['history'],
                 student_current_lesson=student.student_current_lesson,
                 input=student.input,
-                # name=student.name,
+                name=student.name,
                 format_instructions=self.tutor_parser.get_format_instructions()
             )
             try:
                 response_dict = self.tutor_parser.parse(response)
             except:
-                print(f'ERROR parsing output: {response}')
-                return
+                try:
+                    response_dict = manual_parse(response)
+                except:
+                    print(f'ERROR parsing output: {response}')
+                    return
             print(response_dict)
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
             if response_dict["student_advance"] == "True":
@@ -188,14 +195,17 @@ class OwlChat:
                 input=student.input,
                 # student_current_lesson=student.student_current_lesson,
                 is_student_inactive=student.is_student_inactive,
-                # name=student.name,
+                name=student.name,
                 format_instructions=self.relax_parser.get_format_instructions()
             )
             try:
                 response_dict = self.relax_parser.parse(response)
             except:
-                print(f'ERROR parsing output: {response}')
-                return
+                try:
+                    response_dict = manual_parse(response)
+                except:
+                    print(f'ERROR parsing output: {response}')
+                    return
             print(response_dict)
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
             return response_dict["response"]
@@ -212,15 +222,19 @@ class OwlChat:
                 history=student.history.load_memory_variables({})['history'],
                 # though_history=student.though_history.load_memory_variables({})['history'],
                 input=student.input,
-                # name=student.name,
+                # learning_program=student.learning_program,
+                name=student.name,
                 format_instructions=self.control_plan_parser.get_format_instructions()
             )
             print('Complete plan control')
             try:
                 thought_response_dict = self.control_plan_parser.parse(thought_response)
             except:
-                print(f'ERROR parsing output: {thought_response}')
-                return
+                try:
+                    thought_response_dict = manual_parse(thought_response)
+                except:
+                    print(f'ERROR parsing output: {thought_response}')
+                    return
             print(f'Thoghts_response_dict={thought_response_dict}')
             thought, next_step = thought_response_dict['thought'], thought_response_dict['next_step']
         else:
@@ -231,7 +245,7 @@ class OwlChat:
                 history=student.history.load_memory_variables({})['history'],
                 # though_history=student.though_history.load_memory_variables({})['history'],
                 input=student.input,
-                # name=student.name,
+                name=student.name,
                 format_instructions=self.control_tutor_parser.get_format_instructions()
             )
             try:
