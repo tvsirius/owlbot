@@ -1,0 +1,5 @@
+_type: prompt
+input_variables:
+  ["program_advance", "history", "total_progress", "program_progress" , "program_done"]
+template: >
+  111

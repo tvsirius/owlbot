@@ -1,270 +1,244 @@
-from langchain.prompts import load_prompt
-
 from load_prompt_fix_encoding import load_prompt_utf
-
 from langchain.chat_models import ChatOpenAI
 from langchain import LLMChain
-from langchain.memory import ConversationBufferMemory, ConversationSummaryBufferMemory, ConversationSummaryMemory
-from prompts.learning_program import fractions
-from json import loads, dumps
-
-from langchain.prompts import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-)
-
-from langchain.output_parsers import ResponseSchema
-from langchain.output_parsers import StructuredOutputParser
+from langchain.memory import ConversationSummaryBufferMemory
+from json import loads
 
 #
-CONTROL_PLAN_PROMPT = load_prompt_utf("prompts/control-to-plan.yaml")
-CONTROL_TUTOR_PROMPT = load_prompt_utf("prompts/control-to-tutor.yaml")
+CONTROL_PROMPT = load_prompt_utf("prompts/control.yaml")
 PLAN_PROMPT = load_prompt_utf("prompts/plan.yaml")
 TUTOR_PROMPT = load_prompt_utf("prompts/tutor.yaml")
 RELAX_PROMPT = load_prompt_utf("prompts/relax.yaml")
+UPDATE_PROMPT = load_prompt_utf("prompts/update.yaml")
 
-TUTOR_TEMPERATURE = 0.7
+CONTROL_TEMPERATURE = 0.0
+TUTOR_TEMPERATURE = 0.6
 RELAX_TEMPERATURE = 0.8
 
-# learning_program = fractions
-
-
-control_thought_schema = ResponseSchema(name="thought",
-                                        description="Yor Thought that makes a prediction about the scholar's needs given current dialogue")
-control_plan_next_step_schema = ResponseSchema(name="next_step",
-                                               description='Your chose of best prompt. Must be one of: ["PLAN", "RELAX"].')
-control_tutor_next_step_schema = ResponseSchema(name="next_step",
-                                                description='Your chose of best prompt. Must be one of: ["TUTOR", "RELAX"].')
-
-plan_response_schema = ResponseSchema(name="response",
-                                      description="Response in Ukrainian language.")
-plan_student_current_lesson_schema = ResponseSchema(name="student_current_lesson",
-                                                    description='Must be left blank (equals "") if the next lesson topic is not confirmed, or you are not sure. If the topic is confirmed, must be set to lesson number and title and content - listing of topics of the lesson ')
-
-tutor_response_schema = ResponseSchema(name="response",
-                                       description="Response to the scholar input in Ukrainian language.")
-tutor_student_advance_schema = ResponseSchema(name="student_advance",
-                                              description='If lesson is completed must be set to "True", if not, or you are not sure must be set "False"')
-tutor_student_summary_update_schema = ResponseSchema(name="student_summary_update",
-                                                     description="Only if there is a conclusion, that scholar have successfully completed this lesson, must contain your comment on scholar achievement on this lesson")
-
-relax_response_schema = ResponseSchema(name="response",
-                                       description="Funny response to the scholar input in Ukrainian language.")
+IDLE_INACTIVITY_DEFAUL=30
 
 memory_defaults = {
     "memory_key": "history",
     "input_key": "input",
     "ai_prefix": "Cyber-Owl",
-     # "human_prefix": "Scholar",
+    # "human_prefix": "Scholar",
 }
 
+from data.learning_program import learning_prorgam
 
-def manual_parse(s:str):
-    return loads("{"+s.split("{")[1].split("}")[0].strip()+"}")
+LEARNING_PROGRAM_KEYS = "[" + ", ".join(['"' + key + '"' for key in learning_prorgam.keys()]) + "]"
+LEARNING_PROGRAM_INFO = {}
+for key, program in learning_prorgam.items():
+    LEARNING_PROGRAM_INFO[key] = f'Программа навчання темі {program["name"]}:\n' + "\n".join(
+        [lesson.split("\n")[0] for lesson in program["lessons"]])
+
+LEARNING_PROGRAM_ALL_INFO = "\n\n".join(['"' + key + '":' + value for key, value in LEARNING_PROGRAM_INFO.items()])
+
+print(LEARNING_PROGRAM_KEYS, LEARNING_PROGRAM_ALL_INFO)
+
+
+def json_parse(s: str):
+    try:
+        return loads("{" + s.split("{")[1].split("}")[0].strip() + "}")
+    except:
+        pass
+
 
 class StudentMemory:
-    # memories
-    #   DialogMemory - ConversationSummaryBufferMemory
-    #   ControlThoughtsMemory - SummaryMemory
-    #   StudentProgressSummary - SummaryMemory
-    # state:
-    #   CurrentEducationStep : str
-    # time:
-    #   InactivityThreshold : seconds
-    #   LessonStart : datetime
+
     def __init__(self, openai_api_key, user_id=None, username=''):
         # super().__init__()]
         self.name = username
         self.user_id = user_id
-        self.llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.4, openai_api_key=openai_api_key)
-        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=700, human_prefix=self.name)
-        # self.though_history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=500)
-        self.student_progress = ConversationSummaryMemory(llm=self.llm)
-        self.student_current_lesson = ""
-        self.is_student_inactive = ""
-        self.inactivity_duration = 0
+        self.llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=CONTROL_TEMPERATURE,
+                              openai_api_key=openai_api_key)
+        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=700,
+                                                       human_prefix=self.name)
+        self.update_chain = LLMChain(
+            llm=self.llm,
+            prompt=UPDATE_PROMPT,
+            verbose=True
+        )
+        self.progress = {"general": ""}
+        for key, program in learning_prorgam.items():
+            self.progress[key] = {
+                "progress": "",
+                "lesson": 0
+            }
+        self.current_program = None
+        self.student_inactive_info = ""
+        self.idle_check_time = 0
+        self.idle_wait_next_phrase = False
         self.input = ""
-        self.learning_program = fractions
+
+    def update_progress(self, program):
+        print('Running UPDATE prompt')
+        response = await self.update_chain.apredict(
+            program_advance=learning_prorgam[program]["name"],
+            history=self.history.load_memory_variables({})['history'],
+            total_progress=self.progress["general"],
+            program_progress=self.progress[program]["progress"],
+            program_done=f'Учень успішно завершив {self.progress[program]["lesson"]} уроків із {len(learning_prorgam[program]["lessons"]) + 1} программи',
+        )
+        response_dict = json_parse(response)
+        if not response_dict:
+            print(f'ERROR parsing output: {response}')
+            return
+        print(response_dict)
+        self.progress["general"] = response_dict["general_progress"]
+        self.progress[program] = response_dict["program_progress"]
+        print("Student progress updated")
+
+    def process_inactivity_info(self, is_student_inactive):
+        if is_student_inactive:
+            if self.idle_wait_next_phrase:
+                self.student_inactive_info = f"Пройшло {self.idle_check_time} секунд паузи між подачею інформації, можна продовжувати і розповісти учню наступний блок"
+                self.idle_wait_next_phrase=False
+                self.idle_check_time=IDLE_INACTIVITY_DEFAULT
+            else:
+                self.student_inactive_info = f"Пройшло {self.idle_check_time} секунд після того, як учню було задане питання, але він не відповідає. Треба привернути його увагу"
+        else:
+            self.student_inactive_info = ""
 
 
 class OwlChat:
 
     def __init__(self, openai_api_key):
 
-        self.llm0 = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0, openai_api_key=openai_api_key)
+        self.llm_CONTROL = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=CONTROL_TEMPERATURE,
+                                      openai_api_key=openai_api_key)
         self.llm_TUTOR = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=TUTOR_TEMPERATURE,
                                     openai_api_key=openai_api_key)
         self.llm_RELAX = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=RELAX_TEMPERATURE,
                                     openai_api_key=openai_api_key)
 
-        self.control_plan_chain = LLMChain(llm=self.llm0,
-                                           prompt=CONTROL_PLAN_PROMPT,
-                                           verbose=True
-                                           )
-        self.control_plan_parser = StructuredOutputParser.from_response_schemas(
-            [control_thought_schema, control_plan_next_step_schema])
+        self.control_chain = LLMChain(llm=self.llm_CONTROL,
+                                      prompt=CONTROL_PROMPT,
+                                      verbose=True
+                                      )
 
-        self.control_tutor_chain = LLMChain(llm=self.llm0,
-                                            prompt=CONTROL_TUTOR_PROMPT,
-                                            verbose=True
-                                            )
-        self.control_tutor_parser = StructuredOutputParser.from_response_schemas(
-            [control_thought_schema, control_tutor_next_step_schema])
-
-        self.plan_chain = LLMChain(llm=self.llm0,
+        self.plan_chain = LLMChain(llm=self.llm_CONTROL,
                                    prompt=PLAN_PROMPT,
                                    verbose=True
                                    )
-        self.plan_parser = StructuredOutputParser.from_response_schemas(
-            [plan_response_schema, plan_student_current_lesson_schema])
 
         self.tutor_chain = LLMChain(llm=self.llm_TUTOR,
                                     prompt=TUTOR_PROMPT,
                                     verbose=True
                                     )
 
-        self.tutor_parser = StructuredOutputParser.from_response_schemas(
-            [tutor_response_schema, tutor_student_advance_schema, tutor_student_summary_update_schema])
-
         self.relax_chain = LLMChain(llm=self.llm_TUTOR,
                                     prompt=RELAX_PROMPT,
                                     verbose=True
                                     )
 
-        self.relax_parser = StructuredOutputParser.from_response_schemas([relax_response_schema])
-
-    async def chat(self, student: StudentMemory):
+    async def chat(self, student: StudentMemory, is_student_inactive=False):
         # ---------------------------------------------------------------------------------------------
-        async def do_plan(thought):
+        async def do_plan(next_input):
             response = await self.plan_chain.apredict(
-                student_progress=student.student_progress.load_memory_variables({})['history'],
-                thought=thought,
-                history=student.history.load_memory_variables({})['history'],
-                input=student.input,
+                current_program=learning_prorgam[student.current_program][
+                    "name"] if student.current_program else "Програму навчання ще не обрано",
+                learning_program_info=LEARNING_PROGRAM_ALL_INFO,
+                learning_program_keys=LEARNING_PROGRAM_KEYS,
+                total_progress=student.progress["general"],
                 name=student.name,
-                learning_program=student.learning_program,
-                format_instructions=self.plan_parser.get_format_instructions()
-            )
-            try:
-                response_dict = self.plan_parser.parse(response)
-            except:
-                try:
-                    response_dict=manual_parse(response)
-                except:
-                    print(f'ERROR parsing output: {response}')
-                    return
-            print(response_dict)
-            student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
-            student.student_current_lesson = response_dict["student_current_lesson"]
-            return response_dict["response"]
-
-        async def do_tutor(thought):
-            response = await self.tutor_chain.apredict(
-                # student_progress=student.student_progress.load_memory_variables({})['history'],
-                thought=thought,
                 history=student.history.load_memory_variables({})['history'],
-                student_current_lesson=student.student_current_lesson,
+                student_inactive_info=student.student_inactive_info,
                 input=student.input,
-                name=student.name,
-                format_instructions=self.tutor_parser.get_format_instructions()
             )
-            try:
-                response_dict = self.tutor_parser.parse(response)
-            except:
-                try:
-                    response_dict = manual_parse(response)
-                except:
-                    print(f'ERROR parsing output: {response}')
-                    return
-            print(response_dict)
-            student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
-            if response_dict["student_advance"] == "True":
-                lesson_completed = student.student_current_lesson
-                student.student_current_lesson = ""
-                print(f"Урок пройдено: {lesson_completed}", response_dict["student_summary_update"])
-                student.student_progress.save_context({"input": f"Урок пройдено: {lesson_completed}"},
-                                                      {"output": response_dict["student_summary_update"]})
-            return response_dict["response"]
-
-        async def do_relax(thought):
-            response = await self.relax_chain.apredict(
-                # student_progress=student.student_progress.load_memory_variables({})['history'],
-                thought=thought,
-                history=student.history.load_memory_variables({})['history'],
-                input=student.input,
-                # student_current_lesson=student.student_current_lesson,
-                is_student_inactive=student.is_student_inactive,
-                name=student.name,
-                format_instructions=self.relax_parser.get_format_instructions()
-            )
-            try:
-                response_dict = self.relax_parser.parse(response)
-            except:
-                try:
-                    response_dict = manual_parse(response)
-                except:
-                    print(f'ERROR parsing output: {response}')
-                    return
-            print(response_dict)
-            student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
-            return response_dict["response"]
-
-        # ------------------------------------------------------------
-        # ------------------------------------------------------------
-        print(f"chat with {student.user_id, student.name}, input={student.input}")
-        if student.student_current_lesson == '':
-            print('Entering plan control')
-            thought_response = await self.control_plan_chain.apredict(
-                student_progress=student.student_progress.load_memory_variables({})['history'],
-                # student_current_lesson=student.student_current_lesson,
-                is_student_inactive=student.is_student_inactive,
-                history=student.history.load_memory_variables({})['history'],
-                # though_history=student.though_history.load_memory_variables({})['history'],
-                input=student.input,
-                # learning_program=student.learning_program,
-                name=student.name,
-                format_instructions=self.control_plan_parser.get_format_instructions()
-            )
-            print('Complete plan control')
-            try:
-                thought_response_dict = self.control_plan_parser.parse(thought_response)
-            except:
-                try:
-                    thought_response_dict = manual_parse(thought_response)
-                except:
-                    print(f'ERROR parsing output: {thought_response}')
-                    return
-            print(f'Thoghts_response_dict={thought_response_dict}')
-            thought, next_step = thought_response_dict['thought'], thought_response_dict['next_step']
-        else:
-            thought_response = await self.control_tutor_chain.apredict(
-                student_progress=student.student_progress.load_memory_variables({})['history'],
-                student_current_lesson=student.student_current_lesson,
-                is_student_inactive=student.is_student_inactive,
-                history=student.history.load_memory_variables({})['history'],
-                # though_history=student.though_history.load_memory_variables({})['history'],
-                input=student.input,
-                name=student.name,
-                format_instructions=self.control_tutor_parser.get_format_instructions()
-            )
-            try:
-                thought_response_dict = self.control_tutor_parser.parse(thought_response)
-            except:
-                print(f'ERROR parsing output: {thought_response}')
+            response_dict = json_parse(response)
+            if not response_dict:
+                print(f'ERROR parsing output: {response}')
                 return
-            print(f'Thoghts_response_dict={thought_response_dict}')
-            thought, next_step = thought_response_dict['thought'], thought_response_dict['next_step']
+            print(response_dict)
+            student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
+            if response_dict["current_program"] in learning_prorgam.keys():
+                print(f'Program {response_dict["current_program"]} selected')
+                student.current_program = response_dict["current_program"]
+            else:
+                print("Program not selected")
+
+            return response_dict["response"]
+
+        async def do_tutor(next_input):
+            current_progress = student.progress[student.current_program] if student.current_program else None
+            response = await self.tutor_chain.apredict(
+                current_program=learning_prorgam[student.current_program][
+                    "name"] if student.current_program else "Програму навчання ще не обрано",
+                lesson_topic=learning_prorgam[student.current_program][
+                    current_progress["lesson"]] if student.current_program else "Програму навчання ще не обрано",
+                progress_on_program=current_progress[
+                    "progress"] if student.current_program else "Програму навчання ще не обрано",
+                total_progress=student.progress["general"],
+                name=student.name,
+                history=student.history.load_memory_variables({})['history'],
+                student_inactive_info=student.student_inactive_info,
+                input=student.input,
+            )
+            response_dict = json_parse(response)
+            if not response_dict:
+                print(f'ERROR parsing output: {response}')
+                return
+            print(response_dict)
+            student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
+            student.idle_check_time = response_dict["idle_check_time"]
+            student.idle_wait_next_phrase = response_dict["idle_wait_next_phrase"]
+            if response_dict["student_advance"] == "True":
+                print('LESSON COMPLETED!')
+                student.progress[student.current_program]["lesson"] += 1
+                student.update_progress(student.current_program)
+                pass
+            return response_dict["response"]
+
+        async def do_relax(next_input):
+            response = await self.relax_chain.apredict(
+                lesson_topic=learning_prorgam[student.current_program][student.progress[student.current_program]],
+                progress_on_program=student.progress[student.current_program]["progress"],
+                total_progress=student.progress["general"],
+                name=student.name,
+                history=student.history.load_memory_variables({})['history'],
+                student_inactive_info=student.student_inactive_info,
+                input=student.input,
+
+            )
+            response_dict = json_parse(response)
+            if not response_dict:
+                print(f'ERROR parsing output: {response}')
+                return
+            print(response_dict)
+            student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
+            return response_dict["response"]
+
+        # ------------------------------------------------------------
+        # ------------------------------------------------------------
+        student.process_inactivity_info(is_student_inactive)
+        print(f"chat with {student.user_id, student.name}, input={student.input}")
+        control_response = await self.control_chain.apredict(
+            current_program=learning_prorgam[student.current_program][
+                "name"] if student.current_program else "Програму навчання ще не обрано",
+            total_progress=student.progress["general"],
+            name=student.name,
+            history=student.history.load_memory_variables({})['history'],
+            student_inactive_info=student.student_inactive_info,
+            input=student.input,
+        )
+
+        control_response_dict = json_parse(control_response)
+        if not control_response_dict:
+            print(f'ERROR parsing output: {control_response}')
+            return
+        print(f'Control_response_dict={control_response_dict}')
+        next_input, next_step = control_response_dict['next_input'], control_response_dict['next_step']
 
         # student.though_history.save_context({"input": student.input}, {"output": thought})
         if next_step == "RELAX":
-            response = await do_relax(thought)
-        elif next_step == "TUTOR" and not (student.student_current_lesson == ""):
-            response = await do_tutor(thought)
-        elif next_step == "PLAN" and student.student_current_lesson == "":
-            response = await do_plan(thought)
+            response = await do_relax(next_input)
+        elif next_step == "TUTOR" and student.current_program is not None:
+            response = await do_tutor(next_input)
+        elif next_step == "PLAN":
+            response = await do_plan(next_input)
         else:
-            print("PROGRAM ERROR IN REASONING ENGINE")
-            response = await do_plan(thought)
+            print("ERROR IN CONTROL PROMPT REASONING")
+            response = await do_plan(next_input)
 
         return response
