@@ -18,7 +18,7 @@ PLAN_TEMPERATURE = 0.2
 TUTOR_TEMPERATURE = 0.75
 RELAX_TEMPERATURE = 1
 
-IDLE_INACTIVITY_DEFAULT = 30
+IDLE_INACTIVITY_DEFAULT = 50
 # IDLE_TUTOR_WAIT = 10
 
 memory_defaults = {
@@ -53,15 +53,14 @@ _DEFAULT_SUMMARIZER_TEMPLATE = """Progressively summarize the lines of conversat
 
 EXAMPLE
 Current summary:
-Учень почав навчання за темою Дроби, та зрозумів що із себе уявляє дроб, як можна її представити.
+The human asks what the AI thinks of artificial intelligence. The AI thinks artificial intelligence is a force for good.
 
 New lines of conversation:
-assistant: Чудово! Тепер, коли ми розуміємо, що таке дріб і як його представити у вигляді кола та смуги, давайте перейдемо до порівняння дробів за допомогою знаків < та >. Наприклад якщо ми порівнюємо дроби 1/2 та 2/3, ми можемо висловити, що 1/2 < 2/3. Розумієш це? 
-
-user: розумію
+Human: Why do you think artificial intelligence is a force for good?
+AI: Because artificial intelligence will help humans reach their full potential.
 
 New summary:
-Учень почав навчання за темою Дроби, та зрозумів що із себе уявляє дроб, як можна її представити. Вчитель розповів про порівняння дробів, і учень зрозумів цю інформацію.
+The human asks what the AI thinks of artificial intelligence. The AI thinks artificial intelligence is a force for good because it will help humans reach their full potential.
 END OF EXAMPLE
 
 Current summary:
@@ -69,6 +68,8 @@ Current summary:
 
 New lines of conversation:
 {new_lines}
+
+New summary:
 
 REMEMBER: This is the summary for learning process, so you should keep only information related to user progress.
 
