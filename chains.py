@@ -16,14 +16,14 @@ CONTROL_TEMPERATURE = 0.0
 TUTOR_TEMPERATURE = 0.4
 RELAX_TEMPERATURE = 0.8
 
-IDLE_INACTIVITY_DEFAULT = 30
-IDLE_TUTOR_WAIT = 15
+IDLE_INACTIVITY_DEFAULT = 20
+IDLE_TUTOR_WAIT = 10
 
 memory_defaults = {
     "memory_key": "history",
     "input_key": "input",
-    "ai_prefix": "Cyber-Owl",
-    # "human_prefix": "Scholar",
+    "ai_prefix": "Кібер-Сова",
+    "human_prefix": "Учень",
 }
 
 from data.learning_program import learning_prorgam
@@ -34,9 +34,11 @@ for key, program in learning_prorgam.items():
     LEARNING_PROGRAM_INFO[key] = f'Программа навчання темі {program["name"]}:\n' + "\n".join(
         [lesson.split("\n")[0] for lesson in program["lessons"]])
 
-LEARNING_PROGRAM_ALL_INFO = "\n\n".join(['"' + key + '":' + value for key, value in LEARNING_PROGRAM_INFO.items()])
+LEARNING_PROGRAM_ALL_INFO = "\n\n".join(
+    [learning_prorgam[key]["name"] + ' ("' + key + '")' + ':' + value for key, value in LEARNING_PROGRAM_INFO.items()])
 
-print(LEARNING_PROGRAM_KEYS, LEARNING_PROGRAM_ALL_INFO)
+print(LEARNING_PROGRAM_KEYS)
+print(LEARNING_PROGRAM_ALL_INFO)
 
 
 def json_parse(s: str):
@@ -53,7 +55,8 @@ class StudentMemory:
         self.llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=CONTROL_TEMPERATURE,
                               openai_api_key=openai_api_key)
         self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=700,
-                                                       human_prefix=self.name)
+                                                       # human_prefix=self.name
+                                                       )
         self.update_chain = LLMChain(
             llm=self.llm,
             prompt=UPDATE_PROMPT,
@@ -72,7 +75,7 @@ class StudentMemory:
         self.last_time = None
         self.input = ""
 
-    def update_progress(self, program=None, advance=False):
+    async def update_progress(self, program=None, advance=False):
         if program is None:
             program = self.current_program
         print('Running UPDATE prompt')
@@ -100,12 +103,14 @@ class StudentMemory:
         self.progress["general"] = response_dict["general_progress"]
         self.progress[program]["progress"] = response_dict["program_progress"]
         self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=700,
-                                                       human_prefix=self.name)
+                                                       human_prefix=self.name
+                                                       )
         self.history.save_context({"input": ""}, {"output": "system: " + program_done})
         print("Student progress updated")
 
     def process_inactivity_info(self, is_student_inactive):
         if is_student_inactive:
+            self.input="(учень мовчить)"
             if self.idle_wait_next_phrase:
                 self.student_inactive_info = f"Пройшло вже більше {self.idle_check_time} секунд паузи у навчанні, можна продовжувати навчання"
                 self.idle_wait_next_phrase = False
@@ -156,7 +161,7 @@ class OwlChat:
                 learning_program_info=LEARNING_PROGRAM_ALL_INFO,
                 learning_program_keys=LEARNING_PROGRAM_KEYS,
                 total_progress=student.progress["general"],
-                name=student.name,
+                name=memory_defaults["human_prefix"],
                 history=student.history.load_memory_variables({})['history'],
                 student_inactive_info=student.student_inactive_info,
                 input=student.input,
@@ -168,7 +173,7 @@ class OwlChat:
             print(response_dict)
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
             if response_dict["change_program"] and response_dict["program"] in learning_prorgam.keys():
-                student.update_progress()
+                await student.update_progress()
             if response_dict["program"] in learning_prorgam.keys():
                 print(f'Program {response_dict["program"]} selected')
                 student.current_program = response_dict["program"]
@@ -186,12 +191,12 @@ class OwlChat:
             response = await self.tutor_chain.apredict(
                 current_program=learning_prorgam[student.current_program][
                     "name"] if student.current_program else "Програму навчання ще не обрано",
-                lesson_topic=learning_prorgam[student.current_program][
-                    current_progress["lesson"]] if student.current_program else "Програму навчання ще не обрано",
+                lesson_topic=learning_prorgam[student.current_program]["lessons"][current_progress[
+                "lesson"]] if student.current_program else "Програму навчання ще не обрано",
                 progress_on_program=current_progress[
                     "progress"] if student.current_program else "Програму навчання ще не обрано",
                 total_progress=student.progress["general"],
-                name=student.name,
+                name=memory_defaults["human_prefix"],
                 history=student.history.load_memory_variables({})['history'],
                 student_inactive_info=student.student_inactive_info,
                 input=student.input,
@@ -203,14 +208,14 @@ class OwlChat:
             print(response_dict)
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
 
-            student.idle_wait_next_phrase = response_dict["idle_wait_next_phrase"]
+            student.idle_wait_next_phrase = response_dict["wait_next_phrase"]
             if student.idle_wait_next_phrase:
                 student.idle_check_time = IDLE_TUTOR_WAIT
             else:
                 student.idle_check_time = IDLE_INACTIVITY_DEFAULT
             if response_dict["student_advance"] == "True":
                 print('LESSON COMPLETED!')
-                student.update_progress(student.current_program, advance=True)
+                await student.update_progress(student.current_program, advance=True)
                 student.progress[student.current_program]["lesson"] += 1
                 pass
             return response_dict["response"]
@@ -219,14 +224,15 @@ class OwlChat:
             response = await self.relax_chain.apredict(
                 current_program=learning_prorgam[student.current_program][
                     "name"] if student.current_program else "Програму навчання ще не обрано",
-                lesson_topic=learning_prorgam[student.current_program][student.progress[student.current_program]],
-                progress_on_program=student.progress[student.current_program]["progress"],
+                lesson_topic=learning_prorgam[student.current_program]["lessons"][current_progress[
+                "lesson"]] if student.current_program else "Програму навчання ще не обрано",
+                progress_on_program=student.progress[student.current_program][
+                    "progress"] if student.current_program else "Програму навчання ще не обрано",
                 total_progress=student.progress["general"],
-                name=student.name,
+                name=memory_defaults["human_prefix"],
                 history=student.history.load_memory_variables({})['history'],
                 student_inactive_info=student.student_inactive_info,
                 input=student.input,
-
             )
             response_dict = json_parse(response)
             if not response_dict:
@@ -234,21 +240,20 @@ class OwlChat:
                 return
             print(response_dict)
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
-
-            return response_dict["response"]
+            return response
 
         # ------------------------------------------------------------
         # ------------------------------------------------------------
+        current_progress = student.progress[student.current_program] if student.current_program else None
         student.process_inactivity_info(is_student_inactive)
         print(f"chat with {student.user_id, student.name}, input={student.input}")
         control_response = await self.control_chain.apredict(
             current_program=learning_prorgam[student.current_program][
                 "name"] if student.current_program else "Програму навчання ще не обрано",
-            lesson_topic=learning_prorgam[student.current_program][
-                student.progress[student.current_program][
-                    "lesson"]] if student.current_program else "Програму навчання ще не обрано",
+            lesson_topic=learning_prorgam[student.current_program]["lessons"][current_progress[
+                "lesson"]] if student.current_program else "Програму навчання ще не обрано",
             total_progress=student.progress["general"],
-            name=student.name,
+            name=memory_defaults["human_prefix"],
             history=student.history.load_memory_variables({})['history'],
             student_inactive_info=student.student_inactive_info,
             input=student.input,
@@ -259,10 +264,9 @@ class OwlChat:
             print(f'ERROR parsing output: {control_response}')
             return
         print(f'Control_response_dict={control_response_dict}')
-        next_prompt, next_input = control_response_dict['prompt'], control_response_dict['next_input']
+        next_prompt = control_response_dict['prompt']
 
         # student.though_history.save_context({"input": student.input}, {"output": thought})
-        student.input = next_input
         if next_prompt == "RELAX":
             response = await do_relax()
         elif next_prompt == "TUTOR" and student.current_program is not None:

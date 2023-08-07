@@ -28,6 +28,7 @@ owlchat = OwlChat(OPENAI_API_KEY)
 
 welcome_message = '''Вітаю тебе у чаті з найкращім віртуальним тьютором - Кібер Совою!'''
 
+do_check_for_inactivity=False
 
 @dp.message_handler(Command(commands=["start"]))
 async def command_start_handler(message: Message) -> None:
@@ -42,7 +43,8 @@ async def message_handler(message: types.Message) -> None:
     """
     Handler for message
     """
-
+    global do_check_for_inactivity
+    do_check_for_inactivity = False
     try:
         if message.chat.type == "private":
             print(f'message {message.chat.type}')
@@ -59,11 +61,13 @@ async def message_handler(message: types.Message) -> None:
                 if len(response) > 0:
                     await message.answer(text=response)
                 student.last_time = datetime.datetime.now()
+            do_check_for_inactivity=True
         else:
             pass
     except TypeError:
         print('typeerror')
         await message.answer("Вибачь, сталась помилка!")
+        do_check_for_inactivity = True
 
 
 async def check_user_inactivity():
@@ -78,18 +82,21 @@ async def check_user_inactivity():
                 await handle_user_inactivity(user_id, current_time, time_difference)'''
     while True:
         await asyncio.sleep(20)
-        for student in STUDENTS.cache:
-            if student.idle_check_time and student.last_time:
-                time_diff = datetime.datetime.now() - student.last_time
-                if time_diff >=  datetime.timedelta(seconds=student.idle_check_time):
-                    student.input = ""
-                    try:
-                        response = await owlchat.chat(student, is_student_inactive=True)
-                        await bot.send_message(chat_id=student.user_id,text=response)
-                        student.last_time=datetime.datetime.now()
-                    except:
-                        print("Error with inactivity call")
-                        student.last_time=datetime.datetime.now()
+        if do_check_for_inactivity:
+            for key,student_cache in STUDENTS.cache.items():
+                check_student=student_cache['value']
+                if check_student.idle_check_time and check_student.last_time:
+                    time_diff = datetime.datetime.now() - check_student.last_time
+                    if time_diff >=  datetime.timedelta(seconds=check_student.idle_check_time):
+                        try:
+                            user_id = key
+                            student = STUDENTS.get(user_id)
+
+                            response = await owlchat.chat(student, is_student_inactive=True)
+                            await bot.send_message(chat_id=student.user_id, text=response)
+                            student.last_time=datetime.datetime.now()
+                        except:
+                            print("Error with inactivity call")
 
 
 
