@@ -81,7 +81,7 @@ async def check_user_inactivity():
                 user_last_activity[user_id]['time']=current_time
                 await handle_user_inactivity(user_id, current_time, time_difference)'''
     while True:
-        await asyncio.sleep(20)
+        await asyncio.sleep(10)
         if do_check_for_inactivity:
             for key,student_cache in STUDENTS.cache.items():
                 check_student=student_cache['value']

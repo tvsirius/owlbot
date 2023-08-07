@@ -4,6 +4,7 @@ from langchain import LLMChain
 from langchain.memory import ConversationSummaryBufferMemory
 from json import loads
 import datetime
+from langchain.prompts.prompt import PromptTemplate
 
 #
 CONTROL_PROMPT = load_prompt_utf("prompts/control.yaml")
@@ -13,17 +14,18 @@ RELAX_PROMPT = load_prompt_utf("prompts/relax.yaml")
 UPDATE_PROMPT = load_prompt_utf("prompts/update.yaml")
 
 CONTROL_TEMPERATURE = 0.0
-TUTOR_TEMPERATURE = 0.4
-RELAX_TEMPERATURE = 0.8
+PLAN_TEMPERATURE = 0.2
+TUTOR_TEMPERATURE = 0.75
+RELAX_TEMPERATURE = 1
 
-IDLE_INACTIVITY_DEFAULT = 20
-IDLE_TUTOR_WAIT = 10
+IDLE_INACTIVITY_DEFAULT = 30
+# IDLE_TUTOR_WAIT = 10
 
 memory_defaults = {
     "memory_key": "history",
     "input_key": "input",
-    "ai_prefix": "Кібер-Сова",
-    "human_prefix": "Учень",
+    "ai_prefix": "assistant",
+    "human_prefix": "user",
 }
 
 from data.learning_program import learning_prorgam
@@ -47,14 +49,46 @@ def json_parse(s: str):
     except:
         pass
 
+_DEFAULT_SUMMARIZER_TEMPLATE = """Progressively summarize the lines of conversation provided, adding onto the previous summary returning a new summary. This is the summary for learning process, so you should keep only information related to user progress.
+
+EXAMPLE
+Current summary:
+Учень почав навчання за темою Дроби, та зрозумів що із себе уявляє дроб, як можна її представити.
+
+New lines of conversation:
+assistant: Чудово! Тепер, коли ми розуміємо, що таке дріб і як його представити у вигляді кола та смуги, давайте перейдемо до порівняння дробів за допомогою знаків < та >. Наприклад якщо ми порівнюємо дроби 1/2 та 2/3, ми можемо висловити, що 1/2 < 2/3. Розумієш це? 
+
+user: розумію
+
+New summary:
+Учень почав навчання за темою Дроби, та зрозумів що із себе уявляє дроб, як можна її представити. Вчитель розповів про порівняння дробів, і учень зрозумів цю інформацію.
+END OF EXAMPLE
+
+Current summary:
+{summary}
+
+New lines of conversation:
+{new_lines}
+
+REMEMBER: This is the summary for learning process, so you should keep only information related to user progress.
+
+Output summary in Ukrainian language.
+
+New summary:"""
+
+
+SUMMARY_PROMPT_UKRAINAN = PromptTemplate(
+    input_variables=["summary", "new_lines"], template=_DEFAULT_SUMMARIZER_TEMPLATE
+)
 
 class StudentMemory:
+
     def __init__(self, openai_api_key, user_id=None, username=''):
         self.name = username
         self.user_id = user_id
         self.llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=CONTROL_TEMPERATURE,
                               openai_api_key=openai_api_key)
-        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=700,
+        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=800, prompt=SUMMARY_PROMPT_UKRAINAN,
                                                        # human_prefix=self.name
                                                        )
         self.update_chain = LLMChain(
@@ -102,7 +136,7 @@ class StudentMemory:
 
         self.progress["general"] = response_dict["general_progress"]
         self.progress[program]["progress"] = response_dict["program_progress"]
-        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=700,
+        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=1200, prompt=SUMMARY_PROMPT_UKRAINAN,
                                                        human_prefix=self.name
                                                        )
         self.history.save_context({"input": ""}, {"output": "system: " + program_done})
@@ -127,6 +161,8 @@ class OwlChat:
 
         self.llm_CONTROL = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=CONTROL_TEMPERATURE,
                                       openai_api_key=openai_api_key)
+        self.llm_PLAN= ChatOpenAI(model_name="gpt-3.5-turbo", temperature=PLAN_TEMPERATURE,
+                                    openai_api_key=openai_api_key)
         self.llm_TUTOR = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=TUTOR_TEMPERATURE,
                                     openai_api_key=openai_api_key)
         self.llm_RELAX = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=RELAX_TEMPERATURE,
@@ -174,13 +210,22 @@ class OwlChat:
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
             if response_dict["change_program"] and response_dict["program"] in learning_prorgam.keys():
                 await student.update_progress()
+            if (response_dict["program"] in learning_prorgam.keys()) and not(response_dict["program"]==student.current_program):
+                student.history = ConversationSummaryBufferMemory(llm=student.llm, **memory_defaults, max_token_limit=800, prompt=SUMMARY_PROMPT_UKRAINAN,
+                                                          # human_prefix=self.name
+                                                          )
+                student.history.save_context({"input": ""}, {"output": "Учень повчав навчання"})
             if response_dict["program"] in learning_prorgam.keys():
                 print(f'Program {response_dict["program"]} selected')
                 student.current_program = response_dict["program"]
+                student.history = ConversationSummaryBufferMemory(llm=student.llm, **memory_defaults, max_token_limit=800, prompt=SUMMARY_PROMPT_UKRAINAN,
+                                                          # human_prefix=self.name
+                                                          )
+                student.history.save_context({"input": ""}, {"output": "Учень повчав навчання"})
             else:
                 print("Program not selected")
             if response_dict["do_learn"]:
-                student.idle_wait_next_phrase = True
+                # student.idle_wait_next_phrase = True
                 student.idle_check_time = IDLE_INACTIVITY_DEFAULT
             else:
                 student.idle_check_time = 0
@@ -195,7 +240,7 @@ class OwlChat:
                 "lesson"]] if student.current_program else "Програму навчання ще не обрано",
                 progress_on_program=current_progress[
                     "progress"] if student.current_program else "Програму навчання ще не обрано",
-                total_progress=student.progress["general"],
+                # total_progress=student.progress["general"],
                 name=memory_defaults["human_prefix"],
                 history=student.history.load_memory_variables({})['history'],
                 student_inactive_info=student.student_inactive_info,
@@ -208,11 +253,11 @@ class OwlChat:
             print(response_dict)
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
 
-            student.idle_wait_next_phrase = response_dict["wait_next_phrase"]
-            if student.idle_wait_next_phrase:
-                student.idle_check_time = IDLE_TUTOR_WAIT
-            else:
-                student.idle_check_time = IDLE_INACTIVITY_DEFAULT
+            # student.idle_wait_next_phrase = response_dict["wait_next_phrase"]
+            # if student.idle_wait_next_phrase:
+            #     student.idle_check_time = IDLE_TUTOR_WAIT
+            # else:
+            #     student.idle_check_time = IDLE_INACTIVITY_DEFAULT
             if response_dict["student_advance"] == "True":
                 print('LESSON COMPLETED!')
                 await student.update_progress(student.current_program, advance=True)
@@ -222,13 +267,13 @@ class OwlChat:
 
         async def do_relax():
             response = await self.relax_chain.apredict(
-                current_program=learning_prorgam[student.current_program][
-                    "name"] if student.current_program else "Програму навчання ще не обрано",
+                # current_program=learning_prorgam[student.current_program][
+                #     "name"] if student.current_program else "Програму навчання ще не обрано",
                 lesson_topic=learning_prorgam[student.current_program]["lessons"][current_progress[
                 "lesson"]] if student.current_program else "Програму навчання ще не обрано",
-                progress_on_program=student.progress[student.current_program][
-                    "progress"] if student.current_program else "Програму навчання ще не обрано",
-                total_progress=student.progress["general"],
+                # progress_on_program=student.progress[student.current_program][
+                #     "progress"] if student.current_program else "Програму навчання ще не обрано",
+                # total_progress=student.progress["general"],
                 name=memory_defaults["human_prefix"],
                 history=student.history.load_memory_variables({})['history'],
                 student_inactive_info=student.student_inactive_info,
@@ -240,7 +285,7 @@ class OwlChat:
                 return
             print(response_dict)
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
-            return response
+            return response_dict["response"]
 
         # ------------------------------------------------------------
         # ------------------------------------------------------------
@@ -250,8 +295,8 @@ class OwlChat:
         control_response = await self.control_chain.apredict(
             current_program=learning_prorgam[student.current_program][
                 "name"] if student.current_program else "Програму навчання ще не обрано",
-            lesson_topic=learning_prorgam[student.current_program]["lessons"][current_progress[
-                "lesson"]] if student.current_program else "Програму навчання ще не обрано",
+            # lesson_topic=learning_prorgam[student.current_program]["lessons"][current_progress[
+            #     "lesson"]] if student.current_program else "Програму навчання ще не обрано",
             total_progress=student.progress["general"],
             name=memory_defaults["human_prefix"],
             history=student.history.load_memory_variables({})['history'],
