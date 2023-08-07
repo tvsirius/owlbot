@@ -22,12 +22,11 @@ dp = Dispatcher(bot)
 # -----------------------------------
 
 
-
 STUDENTS = LRUCache(50)
 
 owlchat = OwlChat(OPENAI_API_KEY)
 
-welcome_message='''Вітаю тебе у чаті з найкращім віртуальним тьютором - Кібер Совою!'''
+welcome_message = '''Вітаю тебе у чаті з найкращім віртуальним тьютором - Кібер Совою!'''
 
 
 @dp.message_handler(Command(commands=["start"]))
@@ -57,21 +56,18 @@ async def message_handler(message: types.Message) -> None:
             student.input = message.text
             if len(student.input) > 0:
                 response = await owlchat.chat(student)
-                if len(response)>0:
+                if len(response) > 0:
                     await message.answer(text=response)
-            # user_last_activity[message.from_user.id] = {}
-            # user_last_activity[message.from_user.id]['idle_time'] = 60
-            # user_last_activity[message.from_user.id]['time'] = datetime.datetime.now()
+                student.last_time = datetime.datetime.now()
         else:
             pass
     except TypeError:
-        # But not all the types is supported to be copied so need to handle it
         print('typeerror')
         await message.answer("Вибачь, сталась помилка!")
 
 
 async def check_user_inactivity():
-    '''    while True:
+    '''
     await asyncio.sleep(30)  # Check user inactivity every 10 seconds
     current_time = datetime.datetime.now()
     for user_id in :
@@ -80,7 +76,21 @@ async def check_user_inactivity():
             if time_difference >= datetime.timedelta(seconds=user_last_activity[user_id]['idle_time']):
                 user_last_activity[user_id]['time']=current_time
                 await handle_user_inactivity(user_id, current_time, time_difference)'''
-    pass
+    while True:
+        await asyncio.sleep(20)
+        for student in STUDENTS.cache:
+            if student.idle_check_time and student.last_time:
+                time_diff = datetime.datetime.now() - student.last_time
+                if time_diff >=  datetime.timedelta(seconds=student.idle_check_time):
+                    student.input = ""
+                    try:
+                        response = await owlchat.chat(student, is_student_inactive=True)
+                        await bot.send_message(chat_id=student.user_id,text=response)
+                        student.last_time=datetime.datetime.now()
+                    except:
+                        print("Error with inactivity call")
+                        student.last_time=datetime.datetime.now()
+
 
 
 async def handle_user_inactivity(user_id: int, current_time, time_difference):
@@ -88,7 +98,6 @@ async def handle_user_inactivity(user_id: int, current_time, time_difference):
     await bot.send_message(user_id, text="Спим?")
 
 
-
 async def main() -> None:
-    # asyncio.create_task(check_user_inactivity())
+    asyncio.create_task(check_user_inactivity())
     await dp.start_polling(bot)

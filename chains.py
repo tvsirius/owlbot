@@ -3,6 +3,7 @@ from langchain.chat_models import ChatOpenAI
 from langchain import LLMChain
 from langchain.memory import ConversationSummaryBufferMemory
 from json import loads
+import datetime
 
 #
 CONTROL_PROMPT = load_prompt_utf("prompts/control.yaml")
@@ -12,10 +13,11 @@ RELAX_PROMPT = load_prompt_utf("prompts/relax.yaml")
 UPDATE_PROMPT = load_prompt_utf("prompts/update.yaml")
 
 CONTROL_TEMPERATURE = 0.0
-TUTOR_TEMPERATURE = 0.6
+TUTOR_TEMPERATURE = 0.4
 RELAX_TEMPERATURE = 0.8
 
-IDLE_INACTIVITY_DEFAUL=30
+IDLE_INACTIVITY_DEFAULT = 30
+IDLE_TUTOR_WAIT = 15
 
 memory_defaults = {
     "memory_key": "history",
@@ -45,9 +47,7 @@ def json_parse(s: str):
 
 
 class StudentMemory:
-
     def __init__(self, openai_api_key, user_id=None, username=''):
-        # super().__init__()]
         self.name = username
         self.user_id = user_id
         self.llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=CONTROL_TEMPERATURE,
@@ -69,34 +69,49 @@ class StudentMemory:
         self.student_inactive_info = ""
         self.idle_check_time = 0
         self.idle_wait_next_phrase = False
+        self.last_time = None
         self.input = ""
 
-    def update_progress(self, program):
+    def update_progress(self, program=None, advance=False):
+        if program is None:
+            program = self.current_program
         print('Running UPDATE prompt')
+        if advance:
+            program_done = f'Учень тільки що успішно завершив {self.progress[program]["lesson"]} урок із {len(learning_prorgam[program]["lessons"]) + 1} уроків программи {learning_prorgam[program]["name"]}'
+        else:
+            program_done = f'Учень пройшов {self.progress[program]["lesson"]} уроків із {len(learning_prorgam[program]["lessons"]) + 1} уроків программи {learning_prorgam[program]["name"]}, і ' \
+                           f'вирішив поки займатись по інший програмі, або зробити перерву'
         response = await self.update_chain.apredict(
-            program_advance=learning_prorgam[program]["name"],
+            program=learning_prorgam[program]["name"],
             history=self.history.load_memory_variables({})['history'],
             total_progress=self.progress["general"],
             program_progress=self.progress[program]["progress"],
-            program_done=f'Учень успішно завершив {self.progress[program]["lesson"]} уроків із {len(learning_prorgam[program]["lessons"]) + 1} программи',
+            program_done=program_done,
+            lesson_topic=learning_prorgam[self.current_program][
+                self.progress[self.current_program][
+                    "lesson"]] if self.current_program else "Програму навчання ще не обрано",
         )
         response_dict = json_parse(response)
         if not response_dict:
             print(f'ERROR parsing output: {response}')
             return
         print(response_dict)
+
         self.progress["general"] = response_dict["general_progress"]
-        self.progress[program] = response_dict["program_progress"]
+        self.progress[program]["progress"] = response_dict["program_progress"]
+        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=700,
+                                                       human_prefix=self.name)
+        self.history.save_context({"input": ""}, {"output": "system: " + program_done})
         print("Student progress updated")
 
     def process_inactivity_info(self, is_student_inactive):
         if is_student_inactive:
             if self.idle_wait_next_phrase:
-                self.student_inactive_info = f"Пройшло {self.idle_check_time} секунд паузи між подачею інформації, можна продовжувати і розповісти учню наступний блок"
-                self.idle_wait_next_phrase=False
-                self.idle_check_time=IDLE_INACTIVITY_DEFAULT
+                self.student_inactive_info = f"Пройшло вже більше {self.idle_check_time} секунд паузи у навчанні, можна продовжувати навчання"
+                self.idle_wait_next_phrase = False
+                self.idle_check_time = IDLE_INACTIVITY_DEFAULT
             else:
-                self.student_inactive_info = f"Пройшло {self.idle_check_time} секунд після того, як учню було задане питання, але він не відповідає. Треба привернути його увагу"
+                self.student_inactive_info = f"Пройшло вже більше {self.idle_check_time} секунд як учнень не відповідає. Треба привернути його увагу"
         else:
             self.student_inactive_info = ""
 
@@ -134,7 +149,7 @@ class OwlChat:
 
     async def chat(self, student: StudentMemory, is_student_inactive=False):
         # ---------------------------------------------------------------------------------------------
-        async def do_plan(next_input):
+        async def do_plan():
             response = await self.plan_chain.apredict(
                 current_program=learning_prorgam[student.current_program][
                     "name"] if student.current_program else "Програму навчання ще не обрано",
@@ -152,15 +167,21 @@ class OwlChat:
                 return
             print(response_dict)
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
-            if response_dict["current_program"] in learning_prorgam.keys():
-                print(f'Program {response_dict["current_program"]} selected')
-                student.current_program = response_dict["current_program"]
+            if response_dict["change_program"] and response_dict["program"] in learning_prorgam.keys():
+                student.update_progress()
+            if response_dict["program"] in learning_prorgam.keys():
+                print(f'Program {response_dict["program"]} selected')
+                student.current_program = response_dict["program"]
             else:
                 print("Program not selected")
-
+            if response_dict["do_learn"]:
+                student.idle_wait_next_phrase = True
+                student.idle_check_time = IDLE_INACTIVITY_DEFAULT
+            else:
+                student.idle_check_time = 0
             return response_dict["response"]
 
-        async def do_tutor(next_input):
+        async def do_tutor():
             current_progress = student.progress[student.current_program] if student.current_program else None
             response = await self.tutor_chain.apredict(
                 current_program=learning_prorgam[student.current_program][
@@ -181,17 +202,23 @@ class OwlChat:
                 return
             print(response_dict)
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
-            student.idle_check_time = response_dict["idle_check_time"]
+
             student.idle_wait_next_phrase = response_dict["idle_wait_next_phrase"]
+            if student.idle_wait_next_phrase:
+                student.idle_check_time = IDLE_TUTOR_WAIT
+            else:
+                student.idle_check_time = IDLE_INACTIVITY_DEFAULT
             if response_dict["student_advance"] == "True":
                 print('LESSON COMPLETED!')
+                student.update_progress(student.current_program, advance=True)
                 student.progress[student.current_program]["lesson"] += 1
-                student.update_progress(student.current_program)
                 pass
             return response_dict["response"]
 
-        async def do_relax(next_input):
+        async def do_relax():
             response = await self.relax_chain.apredict(
+                current_program=learning_prorgam[student.current_program][
+                    "name"] if student.current_program else "Програму навчання ще не обрано",
                 lesson_topic=learning_prorgam[student.current_program][student.progress[student.current_program]],
                 progress_on_program=student.progress[student.current_program]["progress"],
                 total_progress=student.progress["general"],
@@ -207,6 +234,7 @@ class OwlChat:
                 return
             print(response_dict)
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
+
             return response_dict["response"]
 
         # ------------------------------------------------------------
@@ -216,6 +244,9 @@ class OwlChat:
         control_response = await self.control_chain.apredict(
             current_program=learning_prorgam[student.current_program][
                 "name"] if student.current_program else "Програму навчання ще не обрано",
+            lesson_topic=learning_prorgam[student.current_program][
+                student.progress[student.current_program][
+                    "lesson"]] if student.current_program else "Програму навчання ще не обрано",
             total_progress=student.progress["general"],
             name=student.name,
             history=student.history.load_memory_variables({})['history'],
@@ -228,17 +259,18 @@ class OwlChat:
             print(f'ERROR parsing output: {control_response}')
             return
         print(f'Control_response_dict={control_response_dict}')
-        next_input, next_step = control_response_dict['next_input'], control_response_dict['next_step']
+        next_prompt, next_input = control_response_dict['prompt'], control_response_dict['next_input']
 
         # student.though_history.save_context({"input": student.input}, {"output": thought})
-        if next_step == "RELAX":
-            response = await do_relax(next_input)
-        elif next_step == "TUTOR" and student.current_program is not None:
-            response = await do_tutor(next_input)
-        elif next_step == "PLAN":
-            response = await do_plan(next_input)
+        student.input = next_input
+        if next_prompt == "RELAX":
+            response = await do_relax()
+        elif next_prompt == "TUTOR" and student.current_program is not None:
+            response = await do_tutor()
+        elif next_prompt == "PLAN":
+            response = await do_plan()
         else:
             print("ERROR IN CONTROL PROMPT REASONING")
-            response = await do_plan(next_input)
+            response = await do_plan()
 
         return response
