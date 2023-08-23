@@ -1,0 +1,26 @@
+_type: prompt
+input_variables:
+  - summary
+  - new_lines
+  - lesson_plan
+template: |
+  Progressively summarize the lines of conversation provided, adding onto the previous summary returning a new summary. 
+  This is a conversations of the lesson plan, so you must keep information in summary only about the learning process.
+  If there is a lesson plan, you should look on to the lesson plan and get info from current summary and new_lines related to the lesson plan, and produce a new summary about all scholar progress in the lesson.
+  The lesson plan consist of a number of steps, so each scholar advance on each of this steps must be kept. Unrelevant information does not need saving.
+  If there is no lesson plan, you should keep the information about studying process and do not keep unreleant to study information.
+  
+  Lesson plan:
+  {lesson_plan}
+  
+  Current summary:
+  {summary}
+  
+  New lines of conversation:
+  {new_lines}
+  
+  New summary:
+  
+  Output summary in Ukrainian language.
+  
+  New summary:

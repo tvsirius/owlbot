@@ -15,17 +15,17 @@ UPDATE_PROMPT = load_prompt_utf("prompts/update.yaml")
 
 CONTROL_TEMPERATURE = 0.0
 PLAN_TEMPERATURE = 0.2
-TUTOR_TEMPERATURE = 0.75
+TUTOR_TEMPERATURE = 1
 RELAX_TEMPERATURE = 1
 
-IDLE_INACTIVITY_DEFAULT = 50
-# IDLE_TUTOR_WAIT = 10
+SUMMARY_MEMORY_TOKEN_LIMIT = 1200
+
+IDLE_INACTIVITY_DEFAULT = 60
 
 memory_defaults = {
     "memory_key": "history",
     "input_key": "input",
-    "ai_prefix": "assistant",
-    "human_prefix": "user",
+    "ai_prefix": "Cyber-Owl",
 }
 
 from data.learning_program import learning_prorgam
@@ -44,43 +44,40 @@ print(LEARNING_PROGRAM_ALL_INFO)
 
 
 def json_parse(s: str):
+    check_words = ['"student_advance"', '"program"']
+    ## Helper function to fix ChatGPT sometimes missing coma (,) in JSON output
     try:
+        for check_word in check_words:
+            split_s = s.split(check_word)
+            if len(split_s) > 1:
+                split_s_2 = split_s[0].split('"')
+                if not split_s_2[-1].startswith(','):
+                    split_s_2[-1] = ',' + split_s_2[-1]
+                s = check_word.join(['"'.join(split_s_2)] + split_s[1:])
         return loads("{" + s.split("{")[1].split("}")[0].strip() + "}")
     except:
         pass
 
-_DEFAULT_SUMMARIZER_TEMPLATE = """Progressively summarize the lines of conversation provided, adding onto the previous summary returning a new summary. This is the summary for learning process, so you should keep only information related to user progress.
 
-EXAMPLE
-Current summary:
-The human asks what the AI thinks of artificial intelligence. The AI thinks artificial intelligence is a force for good.
+def SUMMARY_PROMPT_UKRAINAN():
+    _DEFAULT_SUMMARIZER_TEMPLATE = '''Progressively summarize the lines of conversation provided, adding onto the previous summary returning a new summary. 
+    This is a convrsation between Cyber-Owl teacher and a sholar. You should produce a new summary about all scholar progress in this lesson.
+    Summary must track all scholar understandign and advancement. 
+    Unrelevant information does not need saving.
 
-New lines of conversation:
-Human: Why do you think artificial intelligence is a force for good?
-AI: Because artificial intelligence will help humans reach their full potential.
+    Current summary:
+    {summary}
+    
+    New lines of conversation:
+    {new_lines}
+    
+    New summary:
+    
+    Output summary in Ukrainian language.
+    
+    New summary:'''
+    return PromptTemplate(input_variables=["summary", "new_lines"], template=_DEFAULT_SUMMARIZER_TEMPLATE)
 
-New summary:
-The human asks what the AI thinks of artificial intelligence. The AI thinks artificial intelligence is a force for good because it will help humans reach their full potential.
-END OF EXAMPLE
-
-Current summary:
-{summary}
-
-New lines of conversation:
-{new_lines}
-
-New summary:
-
-REMEMBER: This is the summary for learning process, so you should keep only information related to user progress.
-
-Output summary in Ukrainian language.
-
-New summary:"""
-
-
-SUMMARY_PROMPT_UKRAINAN = PromptTemplate(
-    input_variables=["summary", "new_lines"], template=_DEFAULT_SUMMARIZER_TEMPLATE
-)
 
 class StudentMemory:
 
@@ -89,8 +86,10 @@ class StudentMemory:
         self.user_id = user_id
         self.llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=CONTROL_TEMPERATURE,
                               openai_api_key=openai_api_key)
-        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=800, prompt=SUMMARY_PROMPT_UKRAINAN,
-                                                       # human_prefix=self.name
+        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults,
+                                                       max_token_limit=SUMMARY_MEMORY_TOKEN_LIMIT,
+                                                       prompt=SUMMARY_PROMPT_UKRAINAN(),
+                                                       human_prefix=self.name
                                                        )
         self.update_chain = LLMChain(
             llm=self.llm,
@@ -108,6 +107,7 @@ class StudentMemory:
         self.idle_check_time = 0
         self.idle_wait_next_phrase = False
         self.last_time = None
+        self.inprocess = False
         self.input = ""
 
     async def update_progress(self, program=None, advance=False):
@@ -119,15 +119,19 @@ class StudentMemory:
         else:
             program_done = f'Учень пройшов {self.progress[program]["lesson"]} уроків із {len(learning_prorgam[program]["lessons"]) + 1} уроків программи {learning_prorgam[program]["name"]}, і ' \
                            f'вирішив поки займатись по інший програмі, або зробити перерву'
+        if self.current_program:
+            current_progress = self.progress[self.current_program]
+            lesson_topic =learning_prorgam[self.current_program]["lessons"][current_progress[
+                "lesson"]]
+        else:
+            lesson_topic = "Програму навчання ще не обрано"
         response = await self.update_chain.apredict(
             program=learning_prorgam[program]["name"],
             history=self.history.load_memory_variables({})['history'],
             total_progress=self.progress["general"],
             program_progress=self.progress[program]["progress"],
             program_done=program_done,
-            lesson_topic=learning_prorgam[self.current_program][
-                self.progress[self.current_program][
-                    "lesson"]] if self.current_program else "Програму навчання ще не обрано",
+            lesson_topic=lesson_topic,
         )
         response_dict = json_parse(response)
         if not response_dict:
@@ -137,7 +141,9 @@ class StudentMemory:
 
         self.progress["general"] = response_dict["general_progress"]
         self.progress[program]["progress"] = response_dict["program_progress"]
-        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults, max_token_limit=1200, prompt=SUMMARY_PROMPT_UKRAINAN,
+        self.history = ConversationSummaryBufferMemory(llm=self.llm, **memory_defaults,
+                                                       max_token_limit=SUMMARY_MEMORY_TOKEN_LIMIT,
+                                                       prompt=SUMMARY_PROMPT_UKRAINAN(),
                                                        human_prefix=self.name
                                                        )
         self.history.save_context({"input": ""}, {"output": "system: " + program_done})
@@ -145,7 +151,7 @@ class StudentMemory:
 
     def process_inactivity_info(self, is_student_inactive):
         if is_student_inactive:
-            self.input="(учень мовчить)"
+            self.input = "(учень мовчить)"
             if self.idle_wait_next_phrase:
                 self.student_inactive_info = f"Пройшло вже більше {self.idle_check_time} секунд паузи у навчанні, можна продовжувати навчання"
                 self.idle_wait_next_phrase = False
@@ -162,9 +168,9 @@ class OwlChat:
 
         self.llm_CONTROL = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=CONTROL_TEMPERATURE,
                                       openai_api_key=openai_api_key)
-        self.llm_PLAN= ChatOpenAI(model_name="gpt-3.5-turbo", temperature=PLAN_TEMPERATURE,
-                                    openai_api_key=openai_api_key)
-        self.llm_TUTOR = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=TUTOR_TEMPERATURE,
+        self.llm_PLAN = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=PLAN_TEMPERATURE,
+                                   openai_api_key=openai_api_key)
+        self.llm_TUTOR = ChatOpenAI(model_name="gpt-3.5-turbo-16k", temperature=TUTOR_TEMPERATURE,
                                     openai_api_key=openai_api_key)
         self.llm_RELAX = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=RELAX_TEMPERATURE,
                                     openai_api_key=openai_api_key)
@@ -191,17 +197,18 @@ class OwlChat:
 
     async def chat(self, student: StudentMemory, is_student_inactive=False):
         # ---------------------------------------------------------------------------------------------
-        async def do_plan():
+        async def do_plan(thought):
             response = await self.plan_chain.apredict(
                 current_program=learning_prorgam[student.current_program][
                     "name"] if student.current_program else "Програму навчання ще не обрано",
                 learning_program_info=LEARNING_PROGRAM_ALL_INFO,
                 learning_program_keys=LEARNING_PROGRAM_KEYS,
                 total_progress=student.progress["general"],
-                name=memory_defaults["human_prefix"],
+                name=student.name,
                 history=student.history.load_memory_variables({})['history'],
                 student_inactive_info=student.student_inactive_info,
                 input=student.input,
+                thought=thought,
             )
             response_dict = json_parse(response)
             if not response_dict:
@@ -211,17 +218,28 @@ class OwlChat:
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
             if response_dict["change_program"] and response_dict["program"] in learning_prorgam.keys():
                 await student.update_progress()
-            if (response_dict["program"] in learning_prorgam.keys()) and not(response_dict["program"]==student.current_program):
-                student.history = ConversationSummaryBufferMemory(llm=student.llm, **memory_defaults, max_token_limit=800, prompt=SUMMARY_PROMPT_UKRAINAN,
-                                                          # human_prefix=self.name
-                                                          )
+            if (response_dict["program"] in learning_prorgam.keys()) and not (
+                    response_dict["program"] == student.current_program):
+                student.current_program = response_dict["program"]
+                current_progress = student.progress[student.current_program] if student.current_program else None
+                lesson_plan = learning_prorgam[student.current_program]["lessons"][
+                    current_progress["lesson"]] if student.current_program else "Програму навчання ще не обрано"
+                student.history = ConversationSummaryBufferMemory(llm=student.llm, **memory_defaults,
+                                                                  max_token_limit=SUMMARY_MEMORY_TOKEN_LIMIT,
+                                                                  prompt=SUMMARY_PROMPT_UKRAINAN(),
+                                                                  human_prefix=student.name
+                                                                  )
                 student.history.save_context({"input": ""}, {"output": "Учень повчав навчання"})
-            if response_dict["program"] in learning_prorgam.keys():
+            if response_dict["program"] in learning_prorgam.keys() and student.current_program is None:
                 print(f'Program {response_dict["program"]} selected')
                 student.current_program = response_dict["program"]
-                student.history = ConversationSummaryBufferMemory(llm=student.llm, **memory_defaults, max_token_limit=800, prompt=SUMMARY_PROMPT_UKRAINAN,
-                                                          # human_prefix=self.name
-                                                          )
+                current_progress = student.progress[student.current_program] if student.current_program else None
+                lesson_plan = learning_prorgam[student.current_program]["lessons"][
+                    current_progress["lesson"]] if student.current_program else "Програму навчання ще не обрано"
+                student.history = ConversationSummaryBufferMemory(llm=student.llm, **memory_defaults,
+                                                                  max_token_limit=SUMMARY_MEMORY_TOKEN_LIMIT,
+                                                                  prompt=SUMMARY_PROMPT_UKRAINAN(),
+                                                                  human_prefix=student.name)
                 student.history.save_context({"input": ""}, {"output": "Учень повчав навчання"})
             else:
                 print("Program not selected")
@@ -232,53 +250,60 @@ class OwlChat:
                 student.idle_check_time = 0
             return response_dict["response"]
 
-        async def do_tutor():
+        async def do_tutor(thought):
             current_progress = student.progress[student.current_program] if student.current_program else None
             response = await self.tutor_chain.apredict(
-                current_program=learning_prorgam[student.current_program][
-                    "name"] if student.current_program else "Програму навчання ще не обрано",
+                # current_program=learning_prorgam[student.current_program][
+                #     "name"] if student.current_program else "Програму навчання ще не обрано",
                 lesson_topic=learning_prorgam[student.current_program]["lessons"][current_progress[
-                "lesson"]] if student.current_program else "Програму навчання ще не обрано",
-                progress_on_program=current_progress[
-                    "progress"] if student.current_program else "Програму навчання ще не обрано",
+                    "lesson"]] if student.current_program else "Програму навчання ще не обрано",
+                # progress_on_program=current_progress[
+                #     "progress"] if student.current_program else "Програму навчання ще не обрано",
                 # total_progress=student.progress["general"],
-                name=memory_defaults["human_prefix"],
+                name=student.name,
                 history=student.history.load_memory_variables({})['history'],
                 student_inactive_info=student.student_inactive_info,
                 input=student.input,
+                thought=thought,
             )
             response_dict = json_parse(response)
             if not response_dict:
-                print(f'ERROR parsing output: {response}')
-                return
+                try:
+                    if response is str and len(response) > 0:
+                        if response.startswith('Cyber-Owl:') or response.startswith('Teacher:'):
+                            response = " ".join(response.split(" ")[1:])
+                        response_dict = {"response": response, "student_advance": False}
+                    else:
+                        print(f'ERROR parsing output: {response}')
+                        return
+                except:
+                    print(f'ERROR parsing output: {response}')
+                    return
             print(response_dict)
             student.history.save_context({"input": student.input}, {"output": response_dict["response"]})
 
-            # student.idle_wait_next_phrase = response_dict["wait_next_phrase"]
-            # if student.idle_wait_next_phrase:
-            #     student.idle_check_time = IDLE_TUTOR_WAIT
-            # else:
-            #     student.idle_check_time = IDLE_INACTIVITY_DEFAULT
-            if response_dict["student_advance"] == "True":
+            if (response_dict["student_advance"] == "True") or (
+                    isinstance(response_dict["student_advance"], bool) and response_dict["student_advance"]):
                 print('LESSON COMPLETED!')
                 await student.update_progress(student.current_program, advance=True)
                 student.progress[student.current_program]["lesson"] += 1
                 pass
             return response_dict["response"]
 
-        async def do_relax():
+        async def do_relax(thought):
             response = await self.relax_chain.apredict(
                 # current_program=learning_prorgam[student.current_program][
                 #     "name"] if student.current_program else "Програму навчання ще не обрано",
                 lesson_topic=learning_prorgam[student.current_program]["lessons"][current_progress[
-                "lesson"]] if student.current_program else "Програму навчання ще не обрано",
+                    "lesson"]] if student.current_program else "Програму навчання ще не обрано",
                 # progress_on_program=student.progress[student.current_program][
                 #     "progress"] if student.current_program else "Програму навчання ще не обрано",
                 # total_progress=student.progress["general"],
-                name=memory_defaults["human_prefix"],
+                name=student.name,
                 history=student.history.load_memory_variables({})['history'],
                 student_inactive_info=student.student_inactive_info,
                 input=student.input,
+                thought=thought,
             )
             response_dict = json_parse(response)
             if not response_dict:
@@ -299,7 +324,7 @@ class OwlChat:
             # lesson_topic=learning_prorgam[student.current_program]["lessons"][current_progress[
             #     "lesson"]] if student.current_program else "Програму навчання ще не обрано",
             total_progress=student.progress["general"],
-            name=memory_defaults["human_prefix"],
+            name=student.name,
             history=student.history.load_memory_variables({})['history'],
             student_inactive_info=student.student_inactive_info,
             input=student.input,
@@ -311,16 +336,17 @@ class OwlChat:
             return
         print(f'Control_response_dict={control_response_dict}')
         next_prompt = control_response_dict['prompt']
+        thought = control_response_dict['thought']
 
         # student.though_history.save_context({"input": student.input}, {"output": thought})
         if next_prompt == "RELAX":
-            response = await do_relax()
+            response = await do_relax(thought)
         elif next_prompt == "TUTOR" and student.current_program is not None:
-            response = await do_tutor()
+            response = await do_tutor(thought)
         elif next_prompt == "PLAN":
-            response = await do_plan()
+            response = await do_plan(thought)
         else:
             print("ERROR IN CONTROL PROMPT REASONING")
-            response = await do_plan()
+            response = await do_plan(thought)
 
-        return response
+        return response, thought, next_prompt

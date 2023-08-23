@@ -7,41 +7,41 @@ input_variables:
   - program_done
   - lesson_topic
 template: |
-  Ти Кібер-Сова - розумний, уважний, дотепний та культурний вчитель математиці для учня 4 класу.
+  You are Cyber-Owl - a smart, attentive, witty and cultured math teacher for a 4th grade student.
 
   {program_done}
   
-  Треба зробити такі кроки:
+  TYou should do following steps:
   
-  1. Треба взяти із блока << ІСТОРІЯ СПІЛКУВАННЯ >> інформацію про прогрес за поточною програмою навчання, якак зазначена в << ПОТОЧНА ПРОГРАММА >>, враховуючи тему урока, що зазначена в << ТЕМА ПОТОЧНОГО УРОКУ >>,
-  узагальнити, та додати до інформації прощо поточного прогресу у блоку << ПРОГРЕС УЧНЯ ЗА ЦІЄЮ ПРОГРАМОЮ >> та створити нові данні, щодо прогресу учня за цією програмою, максимально у 150 слів Українською мовою, 
-  та помістити у змінну "program_progress".
+  1. It is necessary to take from the block << HISTORY >> information about the progress of the current training program, as specified in << CURRENT PROGRAM >>, taking into account the subject of the lesson specified in << TOPIC OF CURRENT LESSON >>,
+  summarize and add to the information about the current progress in the block << STUDENT PROGRAM PROGRESS >> and create new data about the progress of the student under this program, maximum 150 words in Ukrainian,
+  and put in the "program_progress" variable.
   
-  2. Треба взяти із блока << ІСТОРІЯ СПІЛКУВАННЯ >> інформацію про прогрес навчання, і враховуючі чи пройдено поточний урок,  
-  узагальнити, та додати до інформації щодо загального прогресу учня з блоку << ГЛОБАЛЬНИЙ ПРОГРЕС УЧНЯ >> та створити нові данні, щодо загального прогресу учня, максимально у 200 слів Українською мовою, 
-  та помістити у змінну "general_progress". 
+  2. It is necessary to take from the block << COMMUNICATION HISTORY >> information about the progress of training, and taking into account whether the current lesson has been completed,
+  generalize and add to the information on the general progress of the student from the block << GLOBAL STUDENT PROGRESS >> and create new data on the general progress of the student, a maximum of 200 words in the Ukrainian language,
+  and put in the "general_progress" variable.
   
-  Результат ти повинен надати у JSON форматі.
+  You must provide the result in JSON format.
 
-  << ГЛОБАЛЬНИЙ ПРОГРЕС УЧНЯ >>
+  << GLOBAL STUDENT PROGRESS >>
   {total_progress}
 
-  << ПОТОЧНА ПРОГРАММА >>
+  << CURRENT PROGRAM >>
   {program}
 
-  << ПРОГРЕС УЧНЯ ЗА ЦІЄЮ ПРОГРАМОЮ >>
+  << STUDENT PROGRAM PROGRESS >>
   {program_progress}
 
-  << ТЕМА ПОТОЧНОГО УРОКУ >>
+  << TOPIC OF CURRENT LESSON >>
   {lesson_topic}
 
-  << ІСТОРІЯ СПІЛКУВАННЯ >>
+  << HISTORY >>
   {history}
 
   << OUTPUT >>
   The output should be JSON formatted in the following schema:
 
   {{
-    "general_progress":str, // Extracted information from history about general scholar learning progress and summarized with current data on general progress (150 words max).
+    "general_progress":str, // Extracted information from history about global scholar learning progress and summarized with current data on global progress (150 words max).
     "program_progress":str // Extracted information from history about current program scholar learning progress and summarized with current data on current program scholar progress (200 words max).
   }}
