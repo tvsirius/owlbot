@@ -3,6 +3,11 @@ import asyncio
 import logging
 import bot
 
+import sys
+
+# Define the log file path
+log_file_path = 'log\output.log'
+
 
 async def run_bot():
 
@@ -11,4 +16,7 @@ async def run_bot():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(run_bot())
+    with open(log_file_path, 'a', encoding='utf-8') as log_file:
+        # Redirect standard output to the log file
+        sys.stdout = log_file
+        asyncio.run(run_bot())
