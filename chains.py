@@ -20,7 +20,7 @@ RELAX_TEMPERATURE = 1
 
 SUMMARY_MEMORY_TOKEN_LIMIT = 1200
 
-IDLE_INACTIVITY_DEFAULT = 60
+IDLE_INACTIVITY_DEFAULT = 10
 
 memory_defaults = {
     "memory_key": "history",
@@ -108,6 +108,7 @@ class StudentMemory:
         self.idle_wait_next_phrase = False
         self.last_time = None
         self.inprocess = False
+        self.idle_times = 0
         self.input = ""
 
     async def update_progress(self, program=None, advance=False):

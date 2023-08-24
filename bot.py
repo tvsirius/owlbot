@@ -32,6 +32,8 @@ welcome_message = '''Вітаю тебе у чаті з найкращім ві�
 
 DO_INACTIVITY_CHECK = True
 
+IDLE_COUNT = 4
+
 # LOG HELPER function
 def get_full_user_info(user_id):
     user_info = ""
@@ -93,7 +95,9 @@ async def command_start_handler(message: Message) -> None:
     """
     This handler receive messages with `/start` command
     """
-    await message.answer(f"Hello, <b>{message.from_user.full_name}!</b><br>{welcome_message}")
+    await message.answer(f"Hello, {message.from_user.full_name}!\n{welcome_message}")
+    await bot.send_message(chat_id=LOG_CHANNEL, text='/Starting conversation with\n\n' + get_short_user_info(message.from_user.id))
+
 
 
 @dp.message_handler(content_types=types.ContentType.TEXT)
@@ -132,6 +136,7 @@ async def message_handler(message: types.Message) -> None:
                                                     f'Owl-Bot thought: ({prompt_ch}):{thought}\n'
                                                     f'Owl-Bot response: {response}')
                     student.last_time = datetime.datetime.now()
+                student.idle_times = 0
                 student.inprocess = False
 
         else:
@@ -161,23 +166,26 @@ async def check_user_inactivity():
                     if check_student.idle_check_time and check_student.last_time:
                         time_diff = datetime.datetime.now() - check_student.last_time
                         if time_diff >=  datetime.timedelta(seconds=check_student.idle_check_time):
-                            try:
-                                user_id = key
-                                student = STUDENTS.get(user_id)
-                                student.inprocess=True
-                                response,thought, prompt_ch = await owlchat.chat(student, is_student_inactive=True)
-                                await bot.send_message(chat_id=student.user_id, text=response)
-                                await bot.send_message(chat_id=LOG_CHANNEL,
-                                                       text=f'INACTIVITY OF {get_short_user_info(user_id)}\n'
-                                                            f'Owl-Bot thought: ({prompt_ch}):{thought}\n'
-                                                            f'Owl-Bot response: {response}')
-                                student.inprocess=False
-                                student.last_time=datetime.datetime.now()
-                            except:
-                                print("Error with inactivity call")
+                            if check_student.idle_times<IDLE_COUNT:
+                                try:
+                                    user_id = key
+                                    student = STUDENTS.get(user_id)
+                                    student.inprocess=True
+                                    student.idle_times+=1
+                                    response,thought, prompt_ch = await owlchat.chat(student, is_student_inactive=True)
+                                    await bot.send_message(chat_id=student.user_id, text=response)
+                                    await bot.send_message(chat_id=LOG_CHANNEL,
+                                                           text=f'INACTIVITY OF {get_short_user_info(user_id)}\n'
+                                                                f'Owl-Bot thought: ({prompt_ch}):{thought}\n'
+                                                                f'Owl-Bot response: {response}')
+                                    student.inprocess=False
+                                    student.last_time=datetime.datetime.now()
+                                except:
+                                    print("Error with inactivity call")
 
 async def main() -> None:
     asyncio.create_task(check_user_inactivity())
+    await bot.send_message(chat_id=LOG_CHANNEL, text='Instance started')
     await dp.start_polling(bot)
 
 
