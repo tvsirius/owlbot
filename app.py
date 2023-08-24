@@ -6,7 +6,7 @@ import bot
 import sys
 
 # Define the log file path
-log_file_path = 'log\output.log'
+log_file_path = "log.txt"
 
 
 async def run_bot():
