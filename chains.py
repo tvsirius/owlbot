@@ -20,7 +20,7 @@ RELAX_TEMPERATURE = 1
 
 SUMMARY_MEMORY_TOKEN_LIMIT = 1200
 
-IDLE_INACTIVITY_DEFAULT = 10
+IDLE_INACTIVITY_DEFAULT = 60
 
 memory_defaults = {
     "memory_key": "history",
