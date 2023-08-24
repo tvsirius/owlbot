@@ -20,7 +20,7 @@ RELAX_TEMPERATURE = 1
 
 SUMMARY_MEMORY_TOKEN_LIMIT = 1200
 
-IDLE_INACTIVITY_DEFAULT = 60
+IDLE_INACTIVITY_DEFAULT = 50
 
 memory_defaults = {
     "memory_key": "history",
@@ -289,6 +289,9 @@ class OwlChat:
                 await student.update_progress(student.current_program, advance=True)
                 student.progress[student.current_program]["lesson"] += 1
                 pass
+
+            student.idle_check_time = IDLE_INACTIVITY_DEFAULT
+
             return response_dict["response"]
 
         async def do_relax(thought):
