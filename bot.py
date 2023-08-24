@@ -32,7 +32,7 @@ welcome_message = '''Вітаю тебе у чаті з найкращім ві�
 
 DO_INACTIVITY_CHECK = True
 
-IDLE_COUNT = 4
+IDLE_COUNT = 3
 
 # LOG HELPER function
 def get_full_user_info(user_id):
